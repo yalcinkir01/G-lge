@@ -1,0 +1,156 @@
+<!DOCTYPE html>
+<html lang="tr">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Gölge Kaçışı - Shadow Escape</title>
+    <style>
+        /* CSS: Oyunun Görünümü */
+        body {
+            margin: 0;
+            padding: 0;
+            background-color: #1a1a1a; /* Koyu arka plan */
+            overflow: hidden; /* Kaydırmayı engelle */
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            height: 100vh;
+            color: white;
+            user-select: none;
+        }
+
+        canvas {
+            display: block;
+            box-shadow: 0 0 20px rgba(0,0,0,0.5);
+            background-color: #000;
+        }
+
+        #ui {
+            position: absolute;
+            top: 20px;
+            pointer-events: none;
+            text-align: center;
+        }
+
+        #score { font-size: 24px; font-weight: bold; }
+    </style>
+</head>
+<body>
+
+    <div id="ui">
+        <div id="score">PUAN: 0</div>
+        <p id="msg">Işıktan Kaç!</p>
+    </div>
+
+    <canvas id="gameCanvas"></canvas>
+
+    <script>
+        // JS: Oyunun Mantığı
+        const canvas = document.getElementById("gameCanvas");
+        const ctx = canvas.getContext("2d");
+        const scoreElement = document.getElementById("score");
+
+        let score = 0;
+        let gameActive = true;
+        let angle = 0; // Işığın dönüş açısı
+        let rotationSpeed = 0.02; // Işığın hızı
+
+        // Oyuncu Bilgileri
+        let player = { x: 0, y: 0, radius: 10 };
+
+        // Ekran Boyutlandırma
+        function resize() {
+            canvas.width = window.innerWidth;
+            canvas.height = window.innerHeight;
+            player.x = canvas.width / 2;
+            player.y = canvas.height / 2 + 100;
+        }
+
+        window.addEventListener('resize', resize);
+        resize();
+
+        // Giriş Kontrolleri (Fare ve Dokunmatik)
+        const updateInput = (e) => {
+            if(!gameActive) return;
+            const clientX = e.touches ? e.touches[0].clientX : e.clientX;
+            const clientY = e.touches ? e.touches[0].clientY : e.clientY;
+            player.x = clientX;
+            player.y = clientY;
+        };
+
+        window.addEventListener('mousemove', updateInput);
+        window.addEventListener('touchmove', updateInput);
+
+        // Ana Oyun Döngüsü
+        function draw() {
+            if (!gameActive) return;
+
+            // 1. Temizlik
+            ctx.fillStyle = "black";
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+            const centerX = canvas.width / 2;
+            const centerY = canvas.height / 2;
+
+            // 2. Işığı Çiz (Üçgen Formunda)
+            ctx.save();
+            ctx.translate(centerX, centerY);
+            ctx.rotate(angle);
+            
+            ctx.beginPath();
+            ctx.moveTo(0, 0);
+            ctx.lineTo(1000, -150); // Işığın genişliği
+            ctx.lineTo(1000, 150);
+            ctx.closePath();
+
+            // Işık efekti
+            let gradient = ctx.createRadialGradient(0, 0, 50, 0, 0, 1000);
+            gradient.addColorStop(0, 'rgba(255, 255, 100, 0.4)');
+            gradient.addColorStop(1, 'rgba(255, 255, 100, 0)');
+            ctx.fillStyle = gradient;
+            ctx.fill();
+            ctx.restore();
+
+            // 3. Oyuncuyu Çiz
+            ctx.beginPath();
+            ctx.arc(player.x, player.y, player.radius, 0, Math.PI * 2);
+            ctx.fillStyle = "white";
+            ctx.fill();
+            ctx.shadowBlur = 15;
+            ctx.shadowColor = "white";
+
+            // 4. Çarpışma Kontrolü (Matematiksel)
+            // Oyuncunun merkeze olan açısını hesapla
+            let dx = player.x - centerX;
+            let dy = player.y - centerY;
+            let playerAngle = Math.atan2(dy, dx);
+            
+            // Işığın açısını -PI ve PI arasına normalize et
+            let normalizedAngle = ((angle + Math.PI) % (Math.PI * 2)) - Math.PI;
+            let diff = Math.abs(playerAngle - normalizedAngle);
+            
+            // Eğer oyuncu ışık hüzmesinin içindeyse (yaklaşık 0.3 radyanlık alan)
+            if (diff < 0.3 || diff > Math.PI * 1.9) {
+                gameOver();
+            }
+
+            // 5. Güncellemeler
+            angle += rotationSpeed;
+            score += 1;
+            scoreElement.innerText = "PUAN: " + Math.floor(score / 10);
+            rotationSpeed += 0.00001; // Oyun gittikçe zorlaşır
+
+            requestAnimationFrame(draw);
+        }
+
+        function gameOver() {
+            gameActive = false;
+            document.getElementById("msg").innerHTML = "<b style='color:red'>YAKALANDIN!</b><br>Yenilemek için tıkla.";
+            window.onclick = () => location.reload();
+        }
+
+        draw();
+    </script>
+</body>
+</html>
