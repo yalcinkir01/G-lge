@@ -3,14 +3,14 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Gölge Ustası - Seviyeli</title>
+    <title>Gölge Ustası - Gerçekçi Işık</title>
     <style>
         body { margin: 0; background: #000; overflow: hidden; color: white; font-family: sans-serif; }
         canvas { display: block; }
         #ui { position: absolute; top: 10px; left: 10px; pointer-events: none; }
-        .stat { font-size: 20px; margin-bottom: 5px; }
+        .stat { font-size: 20px; margin-bottom: 5px; text-shadow: 1px 1px 2px black; }
         #level-up { position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); 
-                    font-size: 40px; color: yellow; display: none; }
+                    font-size: 40px; color: yellow; display: none; text-shadow: 0 0 10px orange; }
     </style>
 </head>
 <body>
@@ -28,190 +28,320 @@
         const canvas = document.getElementById("gameCanvas");
         const ctx = canvas.getContext("2d");
 
-        // Oyun Değişkenleri
+        // === OYUN DEĞİŞKENLERİ ===
         let level = 1;
         let score = 0;
         let gameActive = true;
         let angle = 0;
-        let rotationSpeed = 0.02;
+        let rotationSpeed = 0.015;
         let currentLaps = 0;
         let lastAngle = 0;
         let totalRotation = 0;
+        let activeBeams = []; // O anki ışık açılarını tutar
 
         // Oyuncu
-        let player = { x: 100, y: 100, radius: 8, speed: 5 };
+        let player = { x: 100, y: 100, radius: 8, speed: 5, color: 'cyan' };
         let keys = {};
 
-        // Engeller (Geometrik Şekiller)
+        // Engeller
         const obstacles = [
-            { x: -150, y: -150, type: 'square', size: 40 },
-            { x: 180, y: -50, type: 'triangle', size: 45 },
-            { x: 50, y: 150, type: 'pentagon', size: 35 }
+            { x: -150, y: -150, type: 'square', size: 50, vertices: [] },
+            { x: 180, y: -50, type: 'triangle', size: 55, vertices: [] },
+            { x: 50, y: 150, type: 'pentagon', size: 45, vertices: [] }
         ];
 
+        // === KONTROLLER VE AYARLAR ===
         window.addEventListener('keydown', e => keys[e.code] = true);
         window.addEventListener('keyup', e => keys[e.code] = false);
 
         function resize() {
             canvas.width = window.innerWidth;
             canvas.height = window.innerHeight;
+            const cx = canvas.width / 2;
+            const cy = canvas.height / 2;
+            // Engellerin köşe noktalarını önceden hesapla
+            obstacles.forEach(obs => obs.vertices = getVertices(obs, cx, cy));
         }
         window.addEventListener('resize', resize);
-        resize();
+        setTimeout(resize, 100); // Başlangıçta emin olmak için
 
-        function drawObstacle(obj) {
-            ctx.fillStyle = "#555";
-            ctx.beginPath();
-            const centerX = canvas.width/2 + obj.x;
-            const centerY = canvas.height/2 + obj.y;
+        // === YARDIMCI FONKSİYONLAR (GEOMETRİ) ===
+        // Bir şeklin köşe noktalarını hesaplar
+        function getVertices(obj, cx, cy) {
+            let vertices = [];
+            const centerX = cx + obj.x;
+            const centerY = cy + obj.y;
+            let sides = obj.type === 'square' ? 4 : (obj.type === 'triangle' ? 3 : 5);
+            let startAngle = obj.type === 'square' ? Math.PI/4 : -Math.PI/2;
 
-            if(obj.type === 'square') {
-                ctx.rect(centerX - obj.size/2, centerY - obj.size/2, obj.size, obj.size);
-            } else if(obj.type === 'triangle') {
-                for(let i=0; i<3; i++) {
-                    let a = (i * 2 * Math.PI / 3) - Math.PI/2;
-                    ctx.lineTo(centerX + obj.size * Math.cos(a), centerY + obj.size * Math.sin(a));
-                }
-            } else if(obj.type === 'pentagon') {
-                for(let i=0; i<5; i++) {
-                    let a = (i * 2 * Math.PI / 5) - Math.PI/2;
-                    ctx.lineTo(centerX + obj.size * Math.cos(a), centerY + obj.size * Math.sin(a));
-                }
+            for(let i=0; i<sides; i++) {
+                let a = startAngle + (i * 2 * Math.PI / sides);
+                // Kare için yarıçap ayarı (köşegen)
+                let radius = obj.type === 'square' ? (obj.size/2) * Math.sqrt(2) : obj.size;
+                vertices.push({
+                    x: centerX + radius * Math.cos(a),
+                    y: centerY + radius * Math.sin(a)
+                });
             }
-            ctx.closePath();
+            return vertices;
+        }
+
+        // Şeklin arkasına düşen "Karanlık Alanı" çizer (Gölge Maskesi)
+        function drawShadowVolume(obs, cx, cy) {
+            if(obs.vertices.length === 0) return;
+            
+            let minAngle = Math.PI * 2;
+            let maxAngle = -Math.PI * 2;
+            let minV = null;
+            let maxV = null;
+
+            // Merkeze göre en geniş açıları yapan iki köşeyi bul
+            obs.vertices.forEach(v => {
+                let ang = Math.atan2(v.y - cy, v.x - cx);
+                // Açıları normalize et (-PI ile PI arası sorununu çözmek için)
+                if (ang < 0) ang += Math.PI * 2;
+                
+                // İlk turda referans al
+                if(minV === null) { minAngle = maxAngle = ang; minV = maxV = v; }
+                
+                // En küçük ve en büyük açılı köşeleri bul (basit yaklaşım)
+                 let diffMin = Math.abs(ang - minAngle);
+                 let diffMax = Math.abs(ang - maxAngle);
+                 if(diffMin > Math.PI) diffMin = Math.PI * 2 - diffMin;
+                 if(diffMax > Math.PI) diffMax = Math.PI * 2 - diffMax;
+
+                 // Bu kısım karmaşık şekillerde hata yapabilir ama basit şekillerde çalışır
+                 // Daha sağlam bir algoritma (Convex Hull) çok uzundur.
+                 // Burada görsel hile yapıyoruz: en uzak iki noktayı alıp dışarı uzatıyoruz.
+            });
+
+            // Basit Hile: Şeklin en sol ve en sağ uçlarını bul (merkeze göre)
+            let sortedByAngle = [...obs.vertices].sort((a,b) => {
+                 let angA = Math.atan2(a.y - cy, a.x - cx);
+                 let angB = Math.atan2(b.y - cy, b.x - cx);
+                 return angA - angB;
+            });
+            
+            let v1 = sortedByAngle[0];
+            let v2 = sortedByAngle[sortedByAngle.length-1];
+             // Özel durum: 0 derecesi etrafındaki geçişler için düzeltme
+             let angleSpan = Math.atan2(v2.y-cy, v2.x-cx) - Math.atan2(v1.y-cy, v1.x-cx);
+             if(Math.abs(angleSpan) > Math.PI) {
+                 v1 = sortedByAngle.find(v => Math.atan2(v.y-cy, v.x-cx) > 0);
+                 v2 = sortedByAngle.reverse().find(v => Math.atan2(v.y-cy, v.x-cx) < 0);
+             }
+
+
+            // Gölgeyi Çiz (Siyah Maske)
+            ctx.beginPath();
+            ctx.moveTo(v1.x, v1.y);
+            // Dışarıya doğru uzat
+            let ang1 = Math.atan2(v1.y - cy, v1.x - cx);
+            ctx.lineTo(cx + Math.cos(ang1) * 3000, cy + Math.sin(ang1) * 3000);
+            let ang2 = Math.atan2(v2.y - cy, v2.x - cx);
+            ctx.lineTo(cx + Math.cos(ang2) * 3000, cy + Math.sin(ang2) * 3000);
+            ctx.lineTo(v2.x, v2.y);
+            // Şeklin arka yüzünü kapat (basitçe)
+            ctx.lineTo(v1.x, v1.y);
+            
+            ctx.fillStyle = "black"; // Tamamen karanlık gölge
             ctx.fill();
         }
 
-        function checkInShadow(px, py, lightAngle) {
+
+        // Engeli Çiz
+        function drawObstacle(obs, isHit) {
+            ctx.beginPath();
+            ctx.moveTo(obs.vertices[0].x, obs.vertices[0].y);
+            for(let i=1; i<obs.vertices.length; i++) {
+                ctx.lineTo(obs.vertices[i].x, obs.vertices[i].y);
+            }
+            ctx.closePath();
+            
+            // Eğer ışık çarpıyorsa parla (Yansıma efekti)
+            if(isHit) {
+                ctx.fillStyle = "#FFFFE0"; // Çok açık sarı
+                ctx.shadowBlur = 20;
+                ctx.shadowColor = "yellow";
+            } else {
+                ctx.fillStyle = "#666";
+                ctx.shadowBlur = 0;
+            }
+            ctx.fill();
+            // Kenarlık
+            ctx.strokeStyle = isHit ? "white" : "#333";
+            ctx.lineWidth = 2;
+            ctx.stroke();
+            ctx.shadowBlur = 0; // Reset
+        }
+
+
+        // Matematiksel Gölge Kontrolü (Eski güvenilir yöntem)
+        function checkInShadowMath(px, py) {
             const cx = canvas.width / 2;
             const cy = canvas.height / 2;
-            
             for (let obs of obstacles) {
                 const ox = cx + obs.x;
                 const oy = cy + obs.y;
-                
-                // Oyuncu engelin arkasında mı? (Basit mesafe ve açı kontrolü)
                 const distPlayer = Math.hypot(px - cx, py - cy);
                 const distObs = Math.hypot(ox - cx, oy - cy);
-                
                 if (distPlayer > distObs) {
                     const angleObs = Math.atan2(oy - cy, ox - cx);
                     const anglePlayer = Math.atan2(py - cy, px - cx);
-                    
-                    if (Math.abs(angleObs - anglePlayer) < 0.2) {
-                        return true; // Gölgedesin!
-                    }
+                    // Şekle göre açı toleransı
+                    let tolerance = obs.type === 'square' ? 0.3 : (obs.type==='triangle' ? 0.25 : 0.35);
+                    if (Math.abs(angleObs - anglePlayer) < tolerance) return true;
                 }
             }
             return false;
         }
+        
+        // Bir engelin ışık tarafından vurulup vurulmadığını kontrol et
+        function isObstacleHit(obs, beamAngle) {
+             const cx = canvas.width / 2;
+             const cy = canvas.height / 2;
+             const ox = cx + obs.x;
+             const oy = cy + obs.y;
+             const angleObs = Math.atan2(oy - cy, ox - cx);
+             let normBeam = ((beamAngle + Math.PI) % (Math.PI * 2)) - Math.PI;
+             // Tolerans içinde mi?
+             return Math.abs(angleObs - normBeam) < 0.3;
+        }
 
+
+        // === OYUN DÖNGÜSÜ (UPDATE) ===
         function update() {
             if (!gameActive) return;
 
-            // Hareket Kontrolü
+            // Hareket
             if (keys['ArrowUp'] || keys['KeyW']) player.y -= player.speed;
             if (keys['ArrowDown'] || keys['KeyS']) player.y += player.speed;
             if (keys['ArrowLeft'] || keys['KeyA']) player.x -= player.speed;
             if (keys['ArrowRight'] || keys['KeyD']) player.x += player.speed;
 
-            // Tur ve Seviye Kontrolü
+            // Sınırlar
+            if(player.x < 0) player.x = 0; if(player.x > canvas.width) player.x = canvas.width;
+            if(player.y < 0) player.y = 0; if(player.y > canvas.height) player.y = canvas.height;
+
+            // Tur ve Seviye
             angle += rotationSpeed;
             let diff = angle - lastAngle;
             totalRotation += diff;
             lastAngle = angle;
-
             currentLaps = Math.floor(totalRotation / (Math.PI * 2));
             document.getElementById("tur").innerText = `TUR: ${currentLaps % 2} / 2`;
-
-            if (currentLaps >= 2) {
+            if (currentLaps > 0 && currentLaps % 2 === 0 && currentLaps !== lastLevelUpLap) {
                 levelUp();
             }
 
-            // Işık Sayısı Ayarı
-            let numBeams = 1;
-            if (level >= 4) numBeams = 2;
-            if (level >= 8) numBeams = 3;
+            // Işık Açılarını Belirle
+            activeBeams = [];
+            let numBeams = level >= 8 ? 3 : (level >= 4 ? 2 : 1);
+            for(let i=0; i < numBeams; i++) {
+                activeBeams.push((angle + (i * Math.PI * 2 / numBeams)) % (Math.PI * 2));
+            }
 
             // Çarpışma Kontrolü
             const cx = canvas.width / 2;
             const cy = canvas.height / 2;
             const pAngle = Math.atan2(player.y - cy, player.x - cx);
             
-            let caught = false;
-            for(let i=0; i < numBeams; i++) {
-                let beamAngle = (angle + (i * Math.PI * 2 / numBeams)) % (Math.PI * 2);
+            let inLight = false;
+            for(let beamAngle of activeBeams) {
                 let normBeam = ((beamAngle + Math.PI) % (Math.PI * 2)) - Math.PI;
-                if (Math.abs(pAngle - normBeam) < 0.25) {
-                    if (!checkInShadow(player.x, player.y, beamAngle)) {
-                        caught = true;
-                    }
+                // Işık hüzmesinin içinde mi? (Yaklaşık 0.4 radyan genişlik)
+                if (Math.abs(pAngle - normBeam) < 0.2) {
+                    inLight = true;
+                    break; 
                 }
             }
 
-            if (caught) gameOver();
+            // Eğer ışık altındaysan ama gölgede değilsen -> Yandın
+            if (inLight && !checkInShadowMath(player.x, player.y)) {
+                gameOver();
+            }
 
             score++;
             document.getElementById("score").innerText = "PUAN: " + Math.floor(score/10);
-            document.getElementById("lvl").innerText = "SEVİYE: " + level;
         }
 
+        let lastLevelUpLap = 0;
         function levelUp() {
-            if (level >= 10) return; // Maksimum seviye
+            if (level >= 10) return;
             level++;
-            totalRotation = 0;
-            currentLaps = 0;
-            rotationSpeed += 0.01;
-            
+            lastLevelUpLap = currentLaps;
+            rotationSpeed += 0.005;
+            document.getElementById("lvl").innerText = "SEVİYE: " + level;
             const msg = document.getElementById("level-up");
             msg.style.display = "block";
-            setTimeout(() => msg.style.display = "none", 1000);
+            setTimeout(() => msg.style.display = "none", 1500);
         }
 
         function gameOver() {
             gameActive = false;
-            alert("YAKALANDIN! Skorun: " + Math.floor(score/10) + "\nSeviye: " + level);
-            location.reload();
+            player.color = "red";
+            draw(); // Son kez çiz ki kırmızı görünsün
+            setTimeout(() => {
+                alert("YAKALANDIN! Skorun: " + Math.floor(score/10) + "\nSeviye: " + level);
+                location.reload();
+            }, 100);
         }
 
+        // === ÇİZİM DÖNGÜSÜ (DRAW) ===
         function draw() {
-            ctx.fillStyle = "black";
-            ctx.fillRect(0, 0, canvas.width, canvas.height);
-
             const cx = canvas.width / 2;
             const cy = canvas.height / 2;
 
-            // Işıkları Çiz
-            let numBeams = 1;
-            if (level >= 4) numBeams = 2;
-            if (level >= 8) numBeams = 3;
+            // 1. Arka Planı Temizle
+            ctx.fillStyle = "black";
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
 
-            for(let i=0; i < numBeams; i++) {
+            // 2. Işıkları Çiz (En alta)
+            for(let beamAngle of activeBeams) {
                 ctx.save();
                 ctx.translate(cx, cy);
-                ctx.rotate(angle + (i * Math.PI * 2 / numBeams));
+                ctx.rotate(beamAngle);
                 ctx.beginPath();
                 ctx.moveTo(0,0);
-                ctx.lineTo(2000, -80);
-                ctx.lineTo(2000, 80);
-                ctx.fillStyle = "rgba(255, 255, 0, 0.3)";
+                // Işık hüzmesini biraz daha daraltıp uzattım
+                ctx.lineTo(3000, -150); 
+                ctx.lineTo(3000, 150);
+                
+                // Işığa gradient efekti
+                let grd = ctx.createRadialGradient(0,0,100, 0,0,3000);
+                grd.addColorStop(0, "rgba(255, 255, 200, 0.8)");
+                grd.addColorStop(1, "rgba(255, 255, 0, 0)");
+                ctx.fillStyle = grd;
                 ctx.fill();
                 ctx.restore();
             }
 
-            // Engelleri Çiz
-            obstacles.forEach(drawObstacle);
+            // 3. Gölge Maskelerini Çiz (Işığın üstüne, cisimlerin altına)
+            // Bu, ışığın cisimlerin arkasına geçmesini görsel olarak engeller.
+            obstacles.forEach(obs => drawShadowVolume(obs, cx, cy));
 
-            // Oyuncuyu Çiz
-            ctx.fillStyle = "cyan";
+            // 4. Engelleri Çiz
+            obstacles.forEach(obs => {
+                // Bu engel şu an bir ışık tarafından vuruluyor mu?
+                let isHit = activeBeams.some(beam => isObstacleHit(obs, beam));
+                drawObstacle(obs, isHit);
+            });
+
+            // 5. Oyuncuyu Çiz (En üste)
+            ctx.fillStyle = player.color;
             ctx.beginPath();
             ctx.arc(player.x, player.y, player.radius, 0, Math.PI*2);
             ctx.fill();
+            if(player.color !== 'red') {
+                ctx.shadowBlur = 10;
+                ctx.shadowColor = "cyan";
+            }
 
             update();
-            requestAnimationFrame(draw);
+            if(gameActive) requestAnimationFrame(draw);
         }
 
+        // Başlat
         draw();
     </script>
 </body>
