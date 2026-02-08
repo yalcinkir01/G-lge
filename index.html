@@ -2,152 +2,214 @@
 <html lang="tr">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>Gölge Kaçışı - Shadow Escape</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Gölge Ustası - Seviyeli</title>
     <style>
-        /* CSS: Oyunun Görünümü */
-        body {
-            margin: 0;
-            padding: 0;
-            background-color: #1a1a1a; /* Koyu arka plan */
-            overflow: hidden; /* Kaydırmayı engelle */
-            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
-            display: flex;
-            justify-content: center;
-            align-items: center;
-            height: 100vh;
-            color: white;
-            user-select: none;
-        }
-
-        canvas {
-            display: block;
-            box-shadow: 0 0 20px rgba(0,0,0,0.5);
-            background-color: #000;
-        }
-
-        #ui {
-            position: absolute;
-            top: 20px;
-            pointer-events: none;
-            text-align: center;
-        }
-
-        #score { font-size: 24px; font-weight: bold; }
+        body { margin: 0; background: #000; overflow: hidden; color: white; font-family: sans-serif; }
+        canvas { display: block; }
+        #ui { position: absolute; top: 10px; left: 10px; pointer-events: none; }
+        .stat { font-size: 20px; margin-bottom: 5px; }
+        #level-up { position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); 
+                    font-size: 40px; color: yellow; display: none; }
     </style>
 </head>
 <body>
 
     <div id="ui">
-        <div id="score">PUAN: 0</div>
-        <p id="msg">Işıktan Kaç!</p>
+        <div class="stat" id="lvl">SEVİYE: 1</div>
+        <div class="stat" id="tur">TUR: 0 / 2</div>
+        <div class="stat" id="score">PUAN: 0</div>
     </div>
+    <div id="level-up">SEVİYE ATLADIN!</div>
 
     <canvas id="gameCanvas"></canvas>
 
     <script>
-        // JS: Oyunun Mantığı
         const canvas = document.getElementById("gameCanvas");
         const ctx = canvas.getContext("2d");
-        const scoreElement = document.getElementById("score");
 
+        // Oyun Değişkenleri
+        let level = 1;
         let score = 0;
         let gameActive = true;
-        let angle = 0; // Işığın dönüş açısı
-        let rotationSpeed = 0.02; // Işığın hızı
+        let angle = 0;
+        let rotationSpeed = 0.02;
+        let currentLaps = 0;
+        let lastAngle = 0;
+        let totalRotation = 0;
 
-        // Oyuncu Bilgileri
-        let player = { x: 0, y: 0, radius: 10 };
+        // Oyuncu
+        let player = { x: 100, y: 100, radius: 8, speed: 5 };
+        let keys = {};
 
-        // Ekran Boyutlandırma
+        // Engeller (Geometrik Şekiller)
+        const obstacles = [
+            { x: -150, y: -150, type: 'square', size: 40 },
+            { x: 180, y: -50, type: 'triangle', size: 45 },
+            { x: 50, y: 150, type: 'pentagon', size: 35 }
+        ];
+
+        window.addEventListener('keydown', e => keys[e.code] = true);
+        window.addEventListener('keyup', e => keys[e.code] = false);
+
         function resize() {
             canvas.width = window.innerWidth;
             canvas.height = window.innerHeight;
-            player.x = canvas.width / 2;
-            player.y = canvas.height / 2 + 100;
         }
-
         window.addEventListener('resize', resize);
         resize();
 
-        // Giriş Kontrolleri (Fare ve Dokunmatik)
-        const updateInput = (e) => {
-            if(!gameActive) return;
-            const clientX = e.touches ? e.touches[0].clientX : e.clientX;
-            const clientY = e.touches ? e.touches[0].clientY : e.clientY;
-            player.x = clientX;
-            player.y = clientY;
-        };
+        function drawObstacle(obj) {
+            ctx.fillStyle = "#555";
+            ctx.beginPath();
+            const centerX = canvas.width/2 + obj.x;
+            const centerY = canvas.height/2 + obj.y;
 
-        window.addEventListener('mousemove', updateInput);
-        window.addEventListener('touchmove', updateInput);
+            if(obj.type === 'square') {
+                ctx.rect(centerX - obj.size/2, centerY - obj.size/2, obj.size, obj.size);
+            } else if(obj.type === 'triangle') {
+                for(let i=0; i<3; i++) {
+                    let a = (i * 2 * Math.PI / 3) - Math.PI/2;
+                    ctx.lineTo(centerX + obj.size * Math.cos(a), centerY + obj.size * Math.sin(a));
+                }
+            } else if(obj.type === 'pentagon') {
+                for(let i=0; i<5; i++) {
+                    let a = (i * 2 * Math.PI / 5) - Math.PI/2;
+                    ctx.lineTo(centerX + obj.size * Math.cos(a), centerY + obj.size * Math.sin(a));
+                }
+            }
+            ctx.closePath();
+            ctx.fill();
+        }
 
-        // Ana Oyun Döngüsü
-        function draw() {
+        function checkInShadow(px, py, lightAngle) {
+            const cx = canvas.width / 2;
+            const cy = canvas.height / 2;
+            
+            for (let obs of obstacles) {
+                const ox = cx + obs.x;
+                const oy = cy + obs.y;
+                
+                // Oyuncu engelin arkasında mı? (Basit mesafe ve açı kontrolü)
+                const distPlayer = Math.hypot(px - cx, py - cy);
+                const distObs = Math.hypot(ox - cx, oy - cy);
+                
+                if (distPlayer > distObs) {
+                    const angleObs = Math.atan2(oy - cy, ox - cx);
+                    const anglePlayer = Math.atan2(py - cy, px - cx);
+                    
+                    if (Math.abs(angleObs - anglePlayer) < 0.2) {
+                        return true; // Gölgedesin!
+                    }
+                }
+            }
+            return false;
+        }
+
+        function update() {
             if (!gameActive) return;
 
-            // 1. Temizlik
-            ctx.fillStyle = "black";
-            ctx.fillRect(0, 0, canvas.width, canvas.height);
+            // Hareket Kontrolü
+            if (keys['ArrowUp'] || keys['KeyW']) player.y -= player.speed;
+            if (keys['ArrowDown'] || keys['KeyS']) player.y += player.speed;
+            if (keys['ArrowLeft'] || keys['KeyA']) player.x -= player.speed;
+            if (keys['ArrowRight'] || keys['KeyD']) player.x += player.speed;
 
-            const centerX = canvas.width / 2;
-            const centerY = canvas.height / 2;
+            // Tur ve Seviye Kontrolü
+            angle += rotationSpeed;
+            let diff = angle - lastAngle;
+            totalRotation += diff;
+            lastAngle = angle;
 
-            // 2. Işığı Çiz (Üçgen Formunda)
-            ctx.save();
-            ctx.translate(centerX, centerY);
-            ctx.rotate(angle);
-            
-            ctx.beginPath();
-            ctx.moveTo(0, 0);
-            ctx.lineTo(1000, -150); // Işığın genişliği
-            ctx.lineTo(1000, 150);
-            ctx.closePath();
+            currentLaps = Math.floor(totalRotation / (Math.PI * 2));
+            document.getElementById("tur").innerText = `TUR: ${currentLaps % 2} / 2`;
 
-            // Işık efekti
-            let gradient = ctx.createRadialGradient(0, 0, 50, 0, 0, 1000);
-            gradient.addColorStop(0, 'rgba(255, 255, 100, 0.4)');
-            gradient.addColorStop(1, 'rgba(255, 255, 100, 0)');
-            ctx.fillStyle = gradient;
-            ctx.fill();
-            ctx.restore();
-
-            // 3. Oyuncuyu Çiz
-            ctx.beginPath();
-            ctx.arc(player.x, player.y, player.radius, 0, Math.PI * 2);
-            ctx.fillStyle = "white";
-            ctx.fill();
-            ctx.shadowBlur = 15;
-            ctx.shadowColor = "white";
-
-            // 4. Çarpışma Kontrolü (Matematiksel)
-            // Oyuncunun merkeze olan açısını hesapla
-            let dx = player.x - centerX;
-            let dy = player.y - centerY;
-            let playerAngle = Math.atan2(dy, dx);
-            
-            // Işığın açısını -PI ve PI arasına normalize et
-            let normalizedAngle = ((angle + Math.PI) % (Math.PI * 2)) - Math.PI;
-            let diff = Math.abs(playerAngle - normalizedAngle);
-            
-            // Eğer oyuncu ışık hüzmesinin içindeyse (yaklaşık 0.3 radyanlık alan)
-            if (diff < 0.3 || diff > Math.PI * 1.9) {
-                gameOver();
+            if (currentLaps >= 2) {
+                levelUp();
             }
 
-            // 5. Güncellemeler
-            angle += rotationSpeed;
-            score += 1;
-            scoreElement.innerText = "PUAN: " + Math.floor(score / 10);
-            rotationSpeed += 0.00001; // Oyun gittikçe zorlaşır
+            // Işık Sayısı Ayarı
+            let numBeams = 1;
+            if (level >= 4) numBeams = 2;
+            if (level >= 8) numBeams = 3;
 
-            requestAnimationFrame(draw);
+            // Çarpışma Kontrolü
+            const cx = canvas.width / 2;
+            const cy = canvas.height / 2;
+            const pAngle = Math.atan2(player.y - cy, player.x - cx);
+            
+            let caught = false;
+            for(let i=0; i < numBeams; i++) {
+                let beamAngle = (angle + (i * Math.PI * 2 / numBeams)) % (Math.PI * 2);
+                let normBeam = ((beamAngle + Math.PI) % (Math.PI * 2)) - Math.PI;
+                if (Math.abs(pAngle - normBeam) < 0.25) {
+                    if (!checkInShadow(player.x, player.y, beamAngle)) {
+                        caught = true;
+                    }
+                }
+            }
+
+            if (caught) gameOver();
+
+            score++;
+            document.getElementById("score").innerText = "PUAN: " + Math.floor(score/10);
+            document.getElementById("lvl").innerText = "SEVİYE: " + level;
+        }
+
+        function levelUp() {
+            if (level >= 10) return; // Maksimum seviye
+            level++;
+            totalRotation = 0;
+            currentLaps = 0;
+            rotationSpeed += 0.01;
+            
+            const msg = document.getElementById("level-up");
+            msg.style.display = "block";
+            setTimeout(() => msg.style.display = "none", 1000);
         }
 
         function gameOver() {
             gameActive = false;
-            document.getElementById("msg").innerHTML = "<b style='color:red'>YAKALANDIN!</b><br>Yenilemek için tıkla.";
-            window.onclick = () => location.reload();
+            alert("YAKALANDIN! Skorun: " + Math.floor(score/10) + "\nSeviye: " + level);
+            location.reload();
+        }
+
+        function draw() {
+            ctx.fillStyle = "black";
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+            const cx = canvas.width / 2;
+            const cy = canvas.height / 2;
+
+            // Işıkları Çiz
+            let numBeams = 1;
+            if (level >= 4) numBeams = 2;
+            if (level >= 8) numBeams = 3;
+
+            for(let i=0; i < numBeams; i++) {
+                ctx.save();
+                ctx.translate(cx, cy);
+                ctx.rotate(angle + (i * Math.PI * 2 / numBeams));
+                ctx.beginPath();
+                ctx.moveTo(0,0);
+                ctx.lineTo(2000, -80);
+                ctx.lineTo(2000, 80);
+                ctx.fillStyle = "rgba(255, 255, 0, 0.3)";
+                ctx.fill();
+                ctx.restore();
+            }
+
+            // Engelleri Çiz
+            obstacles.forEach(drawObstacle);
+
+            // Oyuncuyu Çiz
+            ctx.fillStyle = "cyan";
+            ctx.beginPath();
+            ctx.arc(player.x, player.y, player.radius, 0, Math.PI*2);
+            ctx.fill();
+
+            update();
+            requestAnimationFrame(draw);
         }
 
         draw();
